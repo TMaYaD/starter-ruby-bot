@@ -35,7 +35,7 @@ client.on :message do |data|
   next unless data['text']
   next if data['subtype']
   next if data['reply_to']
-  next unless time_string = extract_time data['text']
+  next unless (time_string = extract_time data['text'])
   
   Time.zone = users[data['user']][:tz]
   begin
