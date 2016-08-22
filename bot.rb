@@ -31,76 +31,72 @@ end
 
 # listen for message event - https://api.slack.com/events/message
 client.on :message do |data|
+  next unless data['type'] === 'message'
+  next unless data['text']
+  next if data['subtype']
+  next if data['reply_to']
+  next unless time_string = extract_time data['text']
+  
+  Time.zone = users[data['user']][:tz]
+  begin
+    time = Time.zone.parse(time_string)
+  rescue
+    next
+  end
+  
+  logger.debug "[#{Time.now}] Got time #{time}"
+  
+  text = []
+  
+  i = 0
+  timezones.each do |label, offset|
+    i += 1
+    localtime = time + offset.to_i.hours
+    emoji = slack_clock_emoji_from_time(localtime)
+    message = "#{emoji} #{localtime.strftime('%H:%M')} #{label}"
+    message += (i % PER_LINE.to_i == 0) ? "\n" : " "
+    text << (offset == users[data['user']][:offset] ? "#{message}" : message)
+  end
 
-  case data['text']
-  when 'hi', 'bot hi' then
-    client.typing channel: data['channel']
-    client.message channel: data['channel'], text: "Hello <@#{data['user']}>."
-    logger.debug("<@#{data['user']}> said hi")
+  text << (MESSAGE % time.to_i.to_s)
 
-    if direct_message?(data)
-      client.message channel: data['channel'], text: "It\'s nice to talk to you directly."
-      logger.debug("And it was a direct message")
+  logger.debug "[#{Time.now}] Sending message..."
+  client.message channel: data['channel'], text: text.join
+end
+
+def time_zones
+  @time_zones ||= begin
+    # Get users list and all available timezones and set default timezone
+
+    uri = URI.parse("https://slack.com/api/users.list?token=#{TOKEN}")
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+    http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+    response = http.get(uri.request_uri)
+    timezones = {}
+    users = {}
+
+    JSON.parse(response.body)['members'].each do |user|
+      offset, label = user['tz_offset'], user['tz']
+      next if offset.nil? or offset == 0 or label.nil? or user['deleted']
+      label = ActiveSupport::TimeZone.find_tzinfo(label).current_period.abbreviation.to_s
+      offset /= 3600
+      if key = timezones.key(offset) and !key.split(' / ').include?(label)
+        timezones.delete(key)
+        label = key + ' / ' + label
+      end
+      timezones[label] = offset unless timezones.has_value?(offset)
+      users[user['id']] = { offset: offset, tz: ActiveSupport::TimeZone[offset].tzinfo.name }
     end
 
-  when 'attachment', 'bot attachment' then
-    # attachment messages require using web_client
-    client.web_client.chat_postMessage(post_message_payload(data))
-    logger.debug("Attachment message posted")
-
-  when bot_mentioned(client)
-    client.message channel: data['channel'], text: 'You really do care about me. :heart:'
-    logger.debug("Bot mentioned in channel #{data['channel']}")
-
-  when 'bot help', 'help' then
-    client.message channel: data['channel'], text: help
-    logger.debug("A call for help")
-
-  when /^bot/ then
-    client.message channel: data['channel'], text: "Sorry <@#{data['user']}>, I don\'t understand. \n#{help}"
-    logger.debug("Unknown command")
+    timezones.sort_by{ |key, value| value }
   end
 end
 
-def direct_message?(data)
-  # direct message channles start with a 'D'
-  data['channel'][0] == 'D'
-end
-
-def bot_mentioned(client)
-  # match on any instances of `<@bot_id>` in the message
-  /\<\@#{client.self['id']}\>+/
-end
-
-def joiner_is_bot?(client, data)
- /^\<\@#{client.self['id']}\>/.match data['channel']['latest']['text']
-end
-
-def help
-  %Q(I will respond to the following messages: \n
-      `bot hi` for a simple message.\n
-      `bot attachment` to see a Slack attachment message.\n
-      `@<your bot\'s name>` to demonstrate detecting a mention.\n
-      `bot help` to see this again.)
-end
-
-def post_message_payload(data)
-  main_msg = 'Beep Beep Boop is a ridiculously simple hosting platform for your Slackbots.'
-  {
-    channel: data['channel'],
-      as_user: true,
-      attachments: [
-        {
-          fallback: main_msg,
-          pretext: 'We bring bots to life. :sunglasses: :thumbsup:',
-          title: 'Host, deploy and share your bot in seconds.',
-          image_url: 'https://storage.googleapis.com/beepboophq/_assets/bot-1.22f6fb.png',
-          title_link: 'https://beepboophq.com/',
-          text: main_msg,
-          color: '#7CD197'
-        }
-      ]
-  }
+def extract_time(text)
+  text.match(/([0-9]{1,2}):?([0-9]{2}) ?(([aA]|[pP])[mM])/) do |match|
+    "#{match[1]}:#{match[2]} #{match[3]}"
+  end
 end
 
 client.start!
