@@ -31,6 +31,7 @@ end
 
 # listen for message event - https://api.slack.com/events/message
 client.on :message do |data|
+  logger.debug "Received message: #{data.inspect}"
   next unless data['type'] === 'message'
   next unless data['text']
   next if data['subtype']
