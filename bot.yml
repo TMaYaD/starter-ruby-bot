@@ -1,5 +1,5 @@
-name: Beepboop Starterbot
-description: A simple Ruby bot starter for Beep Boop
+name: TimeZone Converter
+description: A simple Ruby bot to convert time between zones in included channels
 avatar: resources/avatar.png
 #background: resources/background.png
 #config:
